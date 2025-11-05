@@ -72,9 +72,15 @@
 
               </div>
 
-              <div v-else>
+              <div v-else-if="item.precooriginal && item.precooriginal > 0">
                 <div class="text-weight-medium">
                   {{ formatCurrency(item.precooriginal) }}
+                </div>
+              </div>
+
+              <div v-else-if="item.precounitario && item.precounitario > 0">
+                <div class="text-weight-medium">
+                  {{ formatCurrency(item.precounitario) }}
                 </div>
               </div>
             </q-item-section>

@@ -84,7 +84,7 @@ const loading = ref(false);
 const editDialogVisible = ref(false);
 const selectedOrder = ref(null);
 const newStatus = ref('');
-const statusOptions = ['Pendente', 'Em Preparo', 'Pronto para Retirada', 'Finalizado', 'Cancelado'];
+const statusOptions = ['Pendente', 'Aprovado', 'Em Preparo', 'Pronto para Retirada', 'Saiu para entrega', 'Finalizado', 'Cancelado'];
 
 const columns = [
   { name: 'idpedido', required: true, label: 'Pedido #', align: 'left', field: 'idpedido', sortable: true },
@@ -117,7 +117,10 @@ async function fetchPedidos() {
 function getStatusColor(status) {
   switch (status) {
     case 'Pendente': return 'orange';
+    case 'Aprovado': return 'teal';
     case 'Em Preparo': return 'blue';
+    case 'Pronto para retirada': return 'indigo';
+    case 'Saiu para entrega': return 'cyan';
     case 'Finalizado': return 'green';
     case 'Cancelado': return 'red';
     default: return 'grey';

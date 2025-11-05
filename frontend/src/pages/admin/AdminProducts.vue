@@ -120,7 +120,7 @@
 
           <q-card-section>
             <q-toggle v-model="newProduct.disponivel" label="Disponível para venda" />
-            <q-toggle v-model="newProduct.destaque" label="Marcar como destaque no menu" color="accent" />
+            <q-toggle v-model="newProduct.destaque" label="Marcar como destaque no menu" />
           </q-card-section>
 
           <q-card-actions align="right">
@@ -159,7 +159,7 @@ const defaultNewProduct = {
 const newProduct = ref({ ...defaultNewProduct });
 const imageFile = ref(null);
 
-const categoryOptions = ['Bolo', 'Docinho', 'Personalizado'];
+const categoryOptions = ['Docinho', 'Personalizado'];
 const timePickerModel = ref('00:00');
 
 const columns = [

@@ -7,11 +7,16 @@
           Nosso Menu
         </q-toolbar-title>
 
+        <q-btn flat round dense icon="receipt_long" @click="openTrackingDialog" class="q-mr-sm">
+          <q-tooltip>Acompanhar Pedido</q-tooltip>
+        </q-btn>
+
         <q-btn flat round dense icon="shopping_cart" @click="cartDialogVisible = true">
           <q-badge v-if="cartStore.cartItemCount > 0" color="red" floating>
             {{ cartStore.cartItemCount }}
           </q-badge>
         </q-btn>
+
       </q-toolbar>
     </q-header>
 
@@ -20,7 +25,7 @@
     </q-page-container>
 
     <q-dialog v-model="cartDialogVisible">
-      <q-card style="width: 500px; max-width: 90vw;">
+      <q-card style="width: 555px; max-width: 90vw;">
         <q-card-section class="row items-center q-pb-none">
           <div class="text-h6">Meu Carrinho</div>
           <q-space />
@@ -34,27 +39,49 @@
 
         <q-card-section v-else>
           <q-list bordered separator>
-            <q-item v-for="item in cartStore.items" :key="item.idproduto">
+            <q-item v-for="item in cartStore.items" :key="item.idproduto || item.id_carrinho_custom" class="q-py-md">
 
               <q-item-section>
                 <q-item-label>{{ item.nome }}</q-item-label>
-                <q-item-label v-if="['Bolo', 'Personalizado'].includes(item.categoria)" caption lines="2">
+                
+                <q-item-label v-if="item.categoria === 'Bolo'" caption lines="2">
                   {{ item.descricao }}
                 </q-item-label>
-              </q-item-section>
-
-               <q-item-section>
-                <q-item-label class="text-right">
-                  <div v-if="item.precopromocional && item.precopromocional > 0" class="text-caption text-grey text-strike">
-                    {{ formatCurrency(item.preco) }}
+                
+                <q-item-label v-else caption>
+                  <div v-if="item.precopromocional && item.precopromocional > 0">
+                    <div class="text-caption text-grey text-strike">
+                      {{ formatCurrency(item.preco) }}
+                    </div>
+                    <div>
+                      {{ formatCurrency(item.precopromocional) }} / un
+                    </div>
                   </div>
-                  <div>{{ item.quantity }}x {{ formatCurrency(item.precopromocional && item.precopromocional > 0 ? item.precopromocional : item.preco) }}</div>
+                  <div v-else>
+                    {{ formatCurrency(item.preco) }} / un
+                  </div>
                 </q-item-label>
-              </q-item-section>
+                </q-item-section>
 
               <q-item-section side>
-                <q-item-label class="text-weight-bold">{{ formatCurrency(item.quantity * (item.precopromocional && item.precopromocional > 0 ? item.precopromocional : item.preco)) }}</q-item-label>
-                <q-btn flat dense round icon="delete" color="negative" size="sm" class="q-mt-xs" @click="cartStore.removeFromCart(item.idproduto)" />
+                <div v-if="item.categoria === 'Bolo'" class="text-body1 text-weight-medium q-mx-sm">
+                  x{{ item.quantity }}
+                </div>
+                
+                <div v-else class="row items-center no-wrap">
+                  <q-btn round dense flat icon="remove" @click="cartStore.decreaseQuantity(item.idproduto)" />
+                  <div class="text-body1 text-weight-medium q-mx-sm" style="min-width: 20px; text-align: center;">
+                    {{ item.quantity }}
+                  </div>
+                  <q-btn round dense flat icon="add" @click="cartStore.increaseQuantity(item.idproduto)" />
+                </div>
+              </q-item-section>
+
+              <q-item-section side class="text-right">
+                <q-item-label class="text-weight-bold">
+                  {{ formatCurrency(item.quantity * (item.precopromocional && item.precopromocional > 0 ? item.precopromocional : item.preco)) }}
+                </q-item-label>
+                <q-btn flat dense round icon="delete" color="negative" size="sm" class="q-mt-xs" @click="cartStore.removeFromCart(item.idproduto || item.id_carrinho_custom)" />
               </q-item-section>
 
             </q-item>
@@ -72,6 +99,48 @@
           <q-btn flat label="Limpar Carrinho" color="negative" @click="cartStore.clearCart" />
           <q-btn label="Finalizar Compra" color="primary" @click="goToCheckout" />
         </q-card-actions>
+      </q-card>
+    </q-dialog>
+
+    <q-dialog v-model="trackingDialogVisible">
+      <q-card style="width: 400px;">
+        <q-form @submit.prevent="submitTracking">
+          <q-card-section>
+            <div class="text-h6">Acompanhar Pedido</div>
+          </q-card-section>
+
+          <q-card-section class="q-gutter-md">
+            <q-input
+              v-model="trackingEmail"
+              type="email"
+              label="E-mail cadastrado no pedido"
+              outlined
+              dense
+              :rules="[val => !!val || 'O e-mail é obrigatório']"
+            />
+            <q-input
+              v-model="trackingKey"
+              label="Chave de Acompanhamento"
+              outlined
+              dense
+              :rules="[val => !!val || 'A chave é obrigatória']"
+            />
+          </q-card-section>
+          
+          <q-card-section v-if="trackingError" class="text-center text-negative">
+            {{ trackingError }}
+          </q-card-section>
+
+          <q-card-actions align="right">
+            <q-btn flat label="Cancelar" v-close-popup />
+            <q-btn
+              label="Buscar Pedido"
+              color="primary"
+              type="submit"
+              :loading="trackingLoading"
+            />
+          </q-card-actions>
+        </q-form>
       </q-card>
     </q-dialog>
 
@@ -103,6 +172,15 @@
               outlined
               dense
               :rules="[val => (val && val.length > 0) || 'O telefone é obrigatório']"
+              lazy-rules
+            />
+            <q-input
+              v-model="customerInfo.email"
+              label="Seu E-mail *"
+              type="email"
+              outlined
+              dense
+              :rules="[val => !!val || 'O e-mail é obrigatório']"
               lazy-rules
             />
           </q-form>
@@ -245,47 +323,25 @@ import { useQuasar } from 'quasar';
 import { useCartStore } from 'src/stores/cart-store';
 import { useSettingsStore } from 'src/stores/settings-store';
 import axios from 'axios';
+import CustomerTrackingDialog from 'src/components/CustomerTrackingDialog.vue';
 
-const $q = useQuasar(); 
+const $q = useQuasar();
 const cartStore = useCartStore();
 const settingsStore = useSettingsStore();
+
 const cartDialogVisible = ref(false);
 const checkoutDialogVisible = ref(false);
 
-const dataEntrega = ref(null);
-const diasBloqueados = ref([]);
-
-async function fetchAvailability() {
-  try {
-    const response = await axios.get('/api/availability');
-    diasBloqueados.value = response.data;
-  } catch (error) {
-    console.error('Erro ao buscar datas disponíveis:', error);
-  }
-}
-
-function dateOptionsFn(d) {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  const tomorrow = new Date(today);
-  tomorrow.setDate(tomorrow.getDate() + 1);
-
-  const currentDate = new Date(d);
-  const dayOfWeek = currentDate.getDay();
-
-  if (currentDate < tomorrow) return false;
-  if (dayOfWeek === 6 || dayOfWeek === 0) return false;
-  if (diasBloqueados.value.includes(d)) return false;
-
-  return true;
-}
-
 const customerInfo = ref({
   nome: '',
-  telefone: ''
+  telefone: '',
+  email: ''
 });
 
-const deliveryOption = ref('retirada'); 
+const dataEntrega = ref(null);
+const dailyLoad = ref({});
+
+const deliveryOption = ref('retirada');
 const deliveryAddress = ref({
   rua: '',
   numero: '',
@@ -294,20 +350,24 @@ const deliveryAddress = ref({
   complemento: ''
 });
 
-const isCheckoutFormValid = computed(() => {
-  return customerInfo.value.nome && customerInfo.value.telefone && paymentMethod.value && dataEntrega.value;
-});
+const paymentMethod = ref(null);
+const cashChangeFor = ref(null);
+const pixQrCode = ref(null);
+const pixLoading = ref(false);
+
+const trackingDialogVisible = ref(false);
+const trackingEmail = ref('');
+const trackingKey = ref('');
+const trackingLoading = ref(false);
+const trackingError = ref(null);
 
 const finalTotal = computed(() => {
-  const deliveryFee = 9;
+  const deliveryFee = 10;
   if (deliveryOption.value === 'entrega') {
     return cartStore.cartTotal + deliveryFee;
   }
   return cartStore.cartTotal;
 });
-
-const paymentMethod = ref(null);
-const cashChangeFor = ref(null);
 
 const availablePaymentOptions = computed(() => {
   if (deliveryOption.value === 'retirada') {
@@ -330,42 +390,74 @@ watch(deliveryOption, () => {
   }
 });
 
-const pixQrCode = ref(null);
-const pixLoading = ref(false);
+const isCheckoutFormValid = computed(() => {
+  return customerInfo.value.nome &&
+         customerInfo.value.telefone &&
+         customerInfo.value.email &&
+         paymentMethod.value &&
+         dataEntrega.value;
+});
 
-async function generatePixQrCode() {
-  pixLoading.value = true;
-  pixQrCode.value = null;
+async function fetchAvailability() {
   try {
-    const response = await axios.post('/api/pix', { valor: finalTotal.value });
-    pixQrCode.value = response.data.qrCodeDataUrl;
+    const response = await axios.get('/api/availability');
+    dailyLoad.value = response.data;
   } catch (error) {
-    console.error('Erro ao gerar PIX:', error);
-    $q.notify({ color: 'negative', message: 'Não foi possível gerar o QR Code do PIX.' });
-  } finally {
-    pixLoading.value = false;
+    console.error('Erro ao buscar datas disponíveis:', error);
   }
 }
 
-function onPaymentMethodChange(value) {
-  if (value === 'pix') {
-    generatePixQrCode();
-  }
-}
+function dateOptionsFn(d) {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const tomorrow = new Date(today);
+  tomorrow.setDate(tomorrow.getDate() + 1);
 
-const formatCurrency = (value) =>
-  Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+  const currentDate = new Date(d);
+  const dayOfWeek = currentDate.getDay();
+
+  if (currentDate < tomorrow) return false;
+  if (dayOfWeek === 6 || dayOfWeek === 0) return false;
+
+  const capacidadeDiariaMinutos = 600;
+  const minutosDoCarrinhoAtual = cartStore.cartTotalMinutes;
+  const dataFormatada = d.replace(/\//g, '-');
+  const cargaAtualDoDia = dailyLoad.value[dataFormatada] || 0;
+
+  if ((cargaAtualDoDia + minutosDoCarrinhoAtual) > capacidadeDiariaMinutos) {
+    return false;
+  }
+
+  return true;
+}
 
 function goToCheckout() {
   cartDialogVisible.value = false;
-  customerInfo.value = { nome: '', telefone: '' };
+  
+  customerInfo.value = { nome: '', telefone: '', email: '' };
   paymentMethod.value = null;
   cashChangeFor.value = null;
   dataEntrega.value = null;
-  fetchAvailability();
   pixQrCode.value = null;
-
+  
+  fetchAvailability();
   checkoutDialogVisible.value = true;
+}
+
+async function onPaymentMethodChange(value) {
+  if (value === 'pix') {
+    pixLoading.value = true;
+    pixQrCode.value = null;
+    try {
+      const response = await axios.post('/api/pix', { valor: finalTotal.value });
+      pixQrCode.value = response.data.qrCodeDataUrl;
+    } catch (error) {
+      console.error('Erro ao gerar PIX:', error);
+      $q.notify({ color: 'negative', message: 'Não foi possível gerar o QR Code do PIX.' });
+    } finally {
+      pixLoading.value = false;
+    }
+  }
 }
 
 async function submitOrder() {
@@ -387,7 +479,7 @@ async function submitOrder() {
 
     $q.dialog({
       title: 'Pedido Enviado!',
-      message: 'O seu pedido foi recebido. Entraremos em contacto em breve para confirmar. Obrigado!',
+      message: 'O seu pedido foi recebido com sucesso. Um e-mail de confirmação foi enviado com a sua chave de acompanhamento.',
       persistent: true
     }).onOk(() => {
       cartStore.clearCart();
@@ -399,9 +491,50 @@ async function submitOrder() {
     $q.notify({
       color: 'negative',
       position: 'top',
-      message: 'Não foi possível enviar o seu pedido. Por favor, tente novamente.',
+      message: error.response?.data?.message || 'Não foi possível enviar o seu pedido.',
       icon: 'report_problem'
     });
   }
 }
+
+function openTrackingDialog() {
+  trackingEmail.value = '';
+  trackingKey.value = '';
+  trackingError.value = null;
+  trackingLoading.value = false;
+  trackingDialogVisible.value = true;
+}
+
+async function submitTracking() {
+  trackingLoading.value = true;
+  trackingError.value = null;
+  try {
+    const response = await axios.post('/api/acompanhar', {
+      email: trackingEmail.value,
+      chave: trackingKey.value,
+    });
+    
+    trackingDialogVisible.value = false;
+    
+    $q.dialog({
+      component: CustomerTrackingDialog,
+      componentProps: {
+        pedido: response.data
+      }
+    });
+
+  } catch (error) {
+    console.error('Erro ao acompanhar pedido:', error);
+    if (error.response && error.response.status === 404) {
+      trackingError.value = 'E-mail ou chave inválidos. Verifique os dados.';
+    } else {
+      trackingError.value = 'Não foi possível buscar o pedido. Tente mais tarde.';
+    }
+  } finally {
+    trackingLoading.value = false;
+  }
+}
+
+const formatCurrency = (value) =>
+  Number(value).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 </script>

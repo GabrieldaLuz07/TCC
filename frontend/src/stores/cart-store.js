@@ -9,6 +9,7 @@ export const useCartStore = defineStore('cart', {
     cartItemCount: (state) => {
       return state.items.length;
     },
+
     cartTotal: (state) => {
       return state.items.reduce((totalAcumulado, item) => {
       const precoASerUsado = item.precopromocional && item.precopromocional > 0
@@ -17,6 +18,15 @@ export const useCartStore = defineStore('cart', {
       const subtotalItem = precoASerUsado * item.quantity;
       return totalAcumulado + subtotalItem;
     }, 0);
+    },
+
+    cartTotalMinutes: (state) => {
+      return state.items.reduce((total, item) => {
+        if (item.tempopreparo) {
+          return total + (parseInt(item.tempopreparo, 10) * item.quantity);
+        }
+        return total;
+      }, 0);
     }
   },
 
@@ -39,6 +49,7 @@ export const useCartStore = defineStore('cart', {
         });
       }
     },
+
     removeFromCart(productId) {
       let index;
       if (typeof productId === 'number') {
@@ -50,8 +61,27 @@ export const useCartStore = defineStore('cart', {
         this.items.splice(index, 1);
       }
     },
+
     clearCart() {
       this.items = [];
     },
+
+    increaseQuantity(cartItemId) {
+      const item = this.items.find(i => (i.idproduto === cartItemId) || (i.idcarrinhocustom === cartItemId));
+      if (item) {
+        item.quantity++;
+      }
+    },
+
+    decreaseQuantity(cartItemId) {
+      const item = this.items.find(i => (i.idproduto === cartItemId) || (i.idcarrinhocustom === cartItemId));
+      if (item) {
+        if (item.quantity > 1) {
+          item.quantity--;
+        } else {
+          this.removeFromCart(cartItemId);
+        }
+      }
+    }
   }
 });

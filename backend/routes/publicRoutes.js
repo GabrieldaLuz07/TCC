@@ -1,22 +1,19 @@
 import express from 'express';
 import db from '../db.js';
-import { QrCodePix } from 'qrcode-pix'; 
+import { QrCodePix } from 'qrcode-pix';
 import QRCode from 'qrcode';
+import { sendEmail } from '../src/services/emailService.js';
 
 const router = express.Router();
 
-router.get('/configuracoes', async (req, res) => {
-  try {
-    const result = await db.query('SELECT nomeloja, logourl, corprincipal FROM configuracoes WHERE idconfiguracao = 1');
-    if (result.rows.length === 0) {
-      return res.status(404).json({ message: 'Configurações não encontradas.' });
-    }
-    res.status(200).json(result.rows[0]);
-  } catch (error) {
-    console.error('Erro ao buscar configurações públicas:', error);
-    res.status(500).json({ message: 'Erro ao buscar configurações.' });
+function generateTrackingKey(length = 6) {
+  const chars = 'ABCDEFGHIJKLMNPQRSTUVWXYZ123456789';
+  let result = '';
+  for (let i = 0; i < length; i++) {
+    result += chars.charAt(Math.floor(Math.random() * chars.length));
   }
-});
+  return result;
+}
 
 router.post('/pix', async (req, res) => {
   const { valor } = req.body;
@@ -36,7 +33,7 @@ router.post('/pix', async (req, res) => {
       value: parseFloat(valor),
     });
 
-    const pixString = qrCodePix.payload(); 
+    const pixString = qrCodePix.payload();
     
     const qrCodeDataUrl = await QRCode.toDataURL(pixString);
 
@@ -59,8 +56,8 @@ router.get('/availability', async (req, res) => {
         SUM(pr.tempopreparo * ip.quantidade) AS minutosproducaopedido
       FROM Pedidos p
       JOIN ItensPedido ip ON p.idpedido = ip.idpedido
-      JOIN Produtos pr ON CAST(ip.idproduto AS BIGINT) = pr.idproduto
-      WHERE p.dataentrega >= CURRENT_DATE
+      JOIN Produtos pr ON ip.idproduto = pr.idproduto
+      WHERE p.dataentrega >= CURRENT_DATE AND ip.idproduto IS NOT NULL
       GROUP BY p.idpedido, p.dataentrega
       ORDER BY p.dataentrega ASC;
     `;
@@ -79,8 +76,11 @@ router.get('/availability', async (req, res) => {
 
     for (const order of allFutureOrders) {
       let minutosRestantesDoPedido = parseInt(order.minutosproducaopedido, 10);
+      if (isNaN(minutosRestantesDoPedido)) continue;
+      
       let diaDeProducao = new Date(order.dataentrega);
 
+      let safetyBreak = 0;
       while (minutosRestantesDoPedido > 0) {
         const diaFormatado = diaDeProducao.toISOString().split('T')[0];
         const cargaAtualDoDia = dailyLoad.get(diaFormatado) || 0;
@@ -95,21 +95,13 @@ router.get('/availability', async (req, res) => {
         if (minutosRestantesDoPedido > 0) {
           diaDeProducao = getNextWorkday(diaDeProducao);
         }
+        safetyBreak++;
+        if (safetyBreak > 1000) break;
       }
     }
 
-    const diasBloqueados = [];
-    for (const [dia, carga] of dailyLoad.entries()) {
-      if (carga >= capacidadeDiariaMinutos) {
-        diasBloqueados.push(dia.replace(/-/g, '/'));
-      }
-    }
-
-    console.log('Pedidos futuros encontrados:', allFutureOrders.length);
-    console.log('Calendário de produção (dailyLoad):', dailyLoad);
-    console.log('Dias que serão bloqueados:', diasBloqueados);
-
-    res.status(200).json(diasBloqueados);
+    const dailyLoadObject = Object.fromEntries(dailyLoad.entries());
+    res.status(200).json(dailyLoadObject);
 
   } catch (error) {
     console.error('Erro ao buscar disponibilidade:', error);
@@ -135,7 +127,8 @@ router.get('/produtos', async (req, res) => {
 
     const respostaFinal = {
       Destaques: destaques,
-      ...menuAgrupado
+      ...menuAgrupado,
+      Bolo: [],
     };
     
     res.status(200).json(respostaFinal);
@@ -147,29 +140,57 @@ router.get('/produtos', async (req, res) => {
 
 router.post('/pedidos', async (req, res) => {
   const { items, total, deliveryMethod, address, paymentInfo, customer, dataEntrega } = req.body;
+  const capacidadeDiariaMinutos = 600;
 
   if (!dataEntrega) {
     return res.status(400).json({ message: 'A data de entrega é obrigatória.' });
   }
-
-  if (!customer || !customer.nome || !customer.telefone) {
-    return res.status(400).json({ message: 'Nome e telefone do cliente são obrigatórios.' });
+  if (!customer || !customer.nome || !customer.telefone || !customer.email) {
+    return res.status(400).json({ message: 'Nome, telefone e e-mail do cliente são obrigatórios.' });
   }
 
   const client = await db.getClient();
 
   try {
+    let minutosDoNovoPedido = 0;
+    for (const item of items) {
+      if (item.tempopreparo) {
+        minutosDoNovoPedido += (parseInt(item.tempopreparo, 10) * item.quantity);
+      }
+    }
+    
+    const availabilityQuery = `
+      SELECT SUM(pr.tempopreparo * ip.quantidade) AS minutos_totais
+      FROM Pedidos p
+      JOIN ItensPedido ip ON p.idpedido = ip.idpedido
+      JOIN Produtos pr ON ip.idproduto = pr.idproduto
+      WHERE p.dataentrega = $1 AND ip.idproduto IS NOT NULL
+    `;
+    const availResult = await client.query(availabilityQuery, [dataEntrega]);
+    const cargaAtualDoDia = parseInt(availResult.rows[0].minutos_totais, 10) || 0;
+
+    if ((cargaAtualDoDia + minutosDoNovoPedido) > capacidadeDiariaMinutos) {
+      return res.status(400).json({ message: 'Este dia não possui capacidade suficiente para o seu pedido. Por favor, escolha outra data.' });
+    }
+
+    const chavePedido = generateTrackingKey();
+
     await client.query('BEGIN');
 
     const pedidoQuery = `
-      INSERT INTO Pedidos (nomecliente, contatocliente, valortotal, status, datapedido, metodopagamento, trocopara, metodoentrega, dataentrega,
-        enderecorua, endereconumero, enderecobairro, enderecocidade, enderecocomplemento)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+      INSERT INTO Pedidos (
+        nomecliente, contatocliente, emailcliente, valortotal, status, datapedido, 
+        metodopagamento, trocopara, metodoentrega, dataentrega,
+        enderecorua, endereconumero, enderecobairro, enderecocidade, enderecocomplemento,
+        chaveacompanhamento
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
       RETURNING idpedido;
     `;
     const pedidoValues = [
       customer.nome,
       customer.telefone,
+      customer.email,
       total,
       'Pendente',
       new Date(),
@@ -181,7 +202,8 @@ router.post('/pedidos', async (req, res) => {
       address ? address.numero : null,
       address ? address.bairro : null,
       address ? address.cidade : null,
-      address ? address.complemento : null
+      address ? address.complemento : null,
+      chavePedido
     ];
     const newPedido = await client.query(pedidoQuery, pedidoValues);
     const newPedidoId = newPedido.rows[0].idpedido;
@@ -196,6 +218,20 @@ router.post('/pedidos', async (req, res) => {
     }
 
     await client.query('COMMIT');
+
+    const emailSubject = `Confirmação do seu Pedido #${newPedidoId}`;
+    const emailHtml = `
+      <h1>Olá, ${customer.nome}!</h1>
+      <p>O seu pedido #${newPedidoId} foi recebido com sucesso.</p>
+      <p>Valor Total: <strong>R$ ${total.toFixed(2)}</strong></p>
+      <p>A sua chave para acompanhar o pedido é: <strong>${chavePedido}</strong></p>
+      <p>Entraremos em contacto em breve pelo telefone ${customer.telefone} para confirmar os detalhes.</p>
+      <br>
+      <p>Obrigado por escolher a Doces da Lelê!</p>
+    `;
+    
+    await sendEmail(customer.email, emailSubject, emailHtml);
+
     res.status(201).json({ message: 'Pedido criado com sucesso!', pedidoId: newPedidoId });
 
   } catch (error) {
@@ -210,9 +246,7 @@ router.post('/pedidos', async (req, res) => {
 router.get('/tamanhosbolo', async (req, res) => {
   try {
     const result = await db.query('SELECT * FROM tamanhosbolo ORDER BY valor ASC');
-
     res.status(200).json(result.rows);
-
   } catch (error) {
     console.error('Erro ao buscar tamanhos de bolo:', error);
     res.status(500).json({ message: 'Erro ao buscar tamanhos de bolo.' });
